@@ -1,0 +1,12 @@
+description: |
+  Right-half trackpad settings adjustable from the Toucan Studio app (M6).
+  Writes the Cirque Pinnacle's registers directly; the trackpad driver itself is
+  used unchanged. Defaults come from the trackpad node's own properties.
+
+compatible: "zmk,toucan-right-trackpad"
+
+properties:
+  trackpad:
+    type: phandle
+    required: true
+    description: The `cirque,pinnacle` node (SPI).

@@ -1,0 +1,7 @@
+# Add after the Toucan shields in build.yaml: `toucan_left … toucan_studio_left`,
+# `toucan_right … toucan_studio_right`. They turn on the Toucan Studio app's settings and updates.
+config SHIELD_TOUCAN_STUDIO_LEFT
+    def_bool $(shields_list_contains,toucan_studio_left)
+
+config SHIELD_TOUCAN_STUDIO_RIGHT
+    def_bool $(shields_list_contains,toucan_studio_right)

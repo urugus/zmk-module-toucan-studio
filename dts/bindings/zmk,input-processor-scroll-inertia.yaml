@@ -1,0 +1,373 @@
+description: |
+  Input processor that adds inertial scrolling to trackball scroll mode.
+  Tracks scroll velocity and generates decaying scroll events after the
+  trackball stops moving.  Designed for BLE keyboards with integer-only math.
+
+  Recommended placement: BEFORE zip_scroll_scaler in the input-processors
+  chain, with scale / scale-div set to match the scaler's two arguments.
+
+    Example chain:
+      &zip_y_scaler (-1) 1
+      &zip_xy_to_scroll_mapper
+      &scroll_inertia          ← place here
+      &zip_scroll_scaler 4 675
+
+    Matching binding:
+      scale     = <4>;
+      scale-div = <675>;
+
+  This placement gives the processor higher-precision velocity tracking
+  (pre-scaler values are larger) and avoids the value=0 events the scaler
+  emits while accumulating its remainder.  The scale/scale-div mirror of
+  the scaler's ratio keeps the inertia output aligned with active scroll
+  output, so the transition from physical scroll to inertia is seamless.
+
+compatible: "zmk,input-processor-scroll-inertia"
+
+properties:
+  "#input-processor-cells":
+    type: int
+    required: true
+    const: 0
+  track-remainders:
+    type: boolean
+    description: |
+      Required by ZMK input listener framework.
+      This processor manages its own remainders internally,
+      so this should be left unset (false).
+
+  # ── EMA velocity filter ──────────────────────────────────
+  gain:
+    type: int
+    default: 300
+    description: |
+      EMA input weight (permille).
+      velocity = (delta × gain + velocity × blend) / 1000
+  blend:
+    type: int
+    default: 700
+    description: |
+      EMA history weight (permille).  gain + blend should equal 1000.
+
+  # ── Inertia start conditions ─────────────────────────────
+  start:
+    type: int
+    default: 40
+    description: |
+      Minimum peak vector velocity (scroll units) to trigger inertia.
+      The comparison uses the magnitude of (peak_x, peak_y) — the
+      integer approximation max(|x|,|y|) + min/2 by default, or the
+      exact Pythagorean value when `exact-magnitude` is set.
+      Angle-invariant either way: a diagonal flick crosses the
+      threshold at the same overall physical strength as an
+      axis-aligned one (exact mode is strictly equal; default mode
+      equal within the approximation's ~0–12% overestimate of
+      diagonals).
+  move:
+    type: int
+    default: 80
+    description: |
+      Minimum cumulative absolute movement (scroll units) within a
+      gesture required to trigger inertia.  Prevents noise-triggered
+      activation.  Sums raw per-event magnitudes from both axes, so
+      a diagonal gesture accumulates naturally without a merge
+      inflation.
+  release:
+    type: int
+    default: 24
+    description: |
+      Milliseconds of no input before the trackball is considered
+      released.  24 ms ≈ 3 frames at 125 Hz.
+
+  # ── Decay ────────────────────────────────────────────────
+  # Defaults give a single iOS-like exponential curve (all rates 990,
+  # boundaries at 0).  Set fast/slow > 0 and use different decay rates
+  # to enable multi-stage behaviour.
+  fast:
+    type: int
+    default: 0
+    description: |
+      Velocity boundary (scroll units) between fast and slow decay
+      zones.  0 disables the fast zone (single curve mode).
+  decay-fast:
+    type: int
+    default: 990
+    description: |
+      High-speed decay rate (permille per tick).
+      990 = multiply by 0.99 each tick.
+  decay-slow:
+    type: int
+    default: 990
+    description: |
+      Mid-speed decay rate (permille per tick).
+  slow:
+    type: int
+    default: 0
+    description: |
+      Velocity boundary (scroll units) between mid and tail decay zones.
+      0 disables the tail zone.
+  decay-tail:
+    type: int
+    default: 990
+    description: |
+      Low-speed tail decay rate (permille per tick).
+      Higher value produces a longer, gentler fade-out.
+  friction:
+    type: int
+    default: 35
+    description: |
+      Constant absolute deceleration subtracted from velocity every
+      tick, in permille of a scroll unit.  friction=1000 subtracts
+      1 scroll unit per tick; friction=35 (the default) subtracts
+      0.035.  Set to 0 to disable and fall back to pure exponential
+      decay.
+
+      Coulomb (dry) friction model.  Unlike `decay-*` which is
+      multiplicative and gives every flick the same *relative* tail
+      length, friction is additive: its effect grows as velocity
+      shrinks.  Small flicks feel its bite early and stop sooner;
+      large flicks spend most of their run in the high-velocity
+      regime where exponential decay dominates, so they're less
+      affected.
+
+      Values below ~4 are lost to fixed-point truncation (internal
+      representation zero).  The default 35 balances small-flick
+      stop timing without noticeably clipping large flicks; raise it
+      toward ~100 for a firmer feel, drop toward 0 for a longer
+      tail.  Values above ~500 visibly shorten large flicks too.
+
+  stop:
+    type: int
+    default: 7
+    description: |
+      Velocity (scroll units) below which inertia stops immediately.
+
+      The perceived smoothness at cutoff depends on the *combination* of
+      stop, scale, and scale-div, not on stop alone:
+
+        output frequency at cutoff (Hz) ≈ stop × scale × 125 / scale-div
+
+      Below ~5 Hz the discrete HID scroll units feel jerky.  Tune so the
+      output frequency at cutoff stays above this threshold:
+
+        scale/scale-div ratio | recommended stop (for ~5 Hz cutoff)
+        ─────────────────────────────────────────────────
+        1:1   (1000/1000)    | stop ≈ 1
+        1:10  (100/1000)     | stop ≈ 10
+        4:675 (recommended)  | stop ≈ 7
+        1:100 (10/1000)      | stop ≈ 100
+
+      Lower stop extends the tail but eventually produces sparse,
+      perceptibly discrete output before the actual stop.
+
+  # ── Output ───────────────────────────────────────────────
+  scale:
+    type: int
+    default: 1000
+    description: |
+      Output scale numerator.
+      Inertia scroll output = velocity × scale / scale-div per tick.
+
+      Recommended: place this processor before zip_scroll_scaler and set
+      scale / scale-div to the scaler's two arguments.  The default 1:1
+      (1000/1000) is only correct if the processor sits at the END of the
+      chain (after any scaler), which is not the recommended placement.
+  scale-div:
+    type: int
+    default: 1000
+    description: |
+      Output scale denominator.  See scale.
+  limit:
+    type: int
+    default: 600
+    description: |
+      Maximum velocity cap (scroll units).  Prevents runaway scrolling.
+  span:
+    type: int
+    default: 6000
+    description: |
+      Runaway safety cap on inertia duration in milliseconds; natural
+      decay typically terminates earlier.  A same-direction event
+      whose magnitude meets `start` is treated as a fresh flick and
+      re-seats this timer, so strong repeated same-direction flicks
+      are not truncated by the cap.
+  tick:
+    type: int
+    default: 8
+    description: |
+      Inertia update interval in milliseconds.
+
+  # ── Behaviour ────────────────────────────────────────────
+  axis:
+    type: int
+    default: 0
+    description: |
+      Which axes receive inertia.  0 = both, 1 = Y only, 2 = X only.
+  layer:
+    type: int
+    default: -1
+    description: |
+      Scroll layer index.  When >= 0, all internal state is reset the
+      moment this layer turns off — driven by ZMK's
+      layer_state_changed event, so cleanup is immediate and does not
+      depend on the inertia `tick` interval (a sub-tick layer toggle
+      otherwise risks leaving stale COASTING state that silently
+      absorbs the first events of the next session, looking like a
+      "scroll lock on layer entry" symptom).  The inertia tick keeps
+      a redundant layer-active check as a belt-and-suspenders fallback.
+      -1 = no layer check (state is then only reset by gesture
+      timeout, stale-inertia, or natural decay; not recommended for
+      typical scroll-layer setups).
+  swap-mod:
+    type: int
+    default: 0
+    description: |
+      Modifier bitmask that, while held, swaps the scroll output axis
+      (vertical ↔ horizontal).  Set 0 to disable.
+
+      Use the MOD_* constants from <dt-bindings/zmk/modifiers.h>:
+        MOD_LCTL=0x01  MOD_LSFT=0x02  MOD_LALT=0x04  MOD_LGUI=0x08
+        MOD_RCTL=0x10  MOD_RSFT=0x20  MOD_RALT=0x40  MOD_RGUI=0x80
+
+      Example: swap-mod = <(MOD_LSFT|MOD_RSFT)>;
+      → either Shift held inverts the scroll axis.
+  unlock-mod:
+    type: int
+    default: 0
+    description: |
+      Modifier bitmask that, while held, unlocks the axis lock and
+      lets the trackball scroll on both axes simultaneously
+      (equivalent to axis=0).  Set 0 to disable.
+
+      Useful when you only have one scroll layer but still want
+      occasional 2D / canvas-pan scrolling — hold this modifier and
+      both axes flow through.
+
+      Takes precedence over swap-mod when both modifiers are held.
+
+      Pick a modifier that doesn't collide with host shortcuts (most
+      apps use Cmd/Ctrl + scroll for zoom).  Right-side modifiers
+      such as MOD_RGUI are usually safe; even safer is to bind the
+      modifier only inside the scroll layer so it only ever fires
+      while you're actively scrolling.
+
+  # ── Advanced tuning ──────────────────────────────────────
+  # These knobs expose the internal state-machine timing.  The
+  # defaults are tuned for a 1000 CPI PMW3610 at 125 Hz and cover
+  # typical setups; only adjust if you've characterised a specific
+  # problem on your own hardware.
+  min-events:
+    type: int
+    default: 10
+    description: |
+      Minimum tracked-axis events required before arming is allowed.
+      Gives the EMA time to converge and filters out transient
+      spikes (e.g. a pointer-acceleration processor switching modes).
+      Recommended range [3, 30].  Very low values arm on noise; very
+      high values prevent arming on short but deliberate flicks.
+  decel-samples:
+    type: int
+    default: 3
+    description: |
+      Consecutive sub-peak samples required to confirm deceleration
+      before transitioning TRACKING → COASTING.  Recommended range
+      [1, 10].  1 triggers inertia on any single velocity dip; high
+      values delay the transition and can miss short flicks.
+  decel-ratio:
+    type: int
+    default: 850
+    description: |
+      Deceleration threshold: current magnitude must drop below this
+      permille fraction of the peak magnitude to count as decelerating.
+      850 = 85%.  Recommended range [700, 950].  Higher values trigger
+      on minor steady-state EMA fluctuations; lower values delay inertia
+      activation on gentle releases.
+  peak-decay:
+    type: int
+    default: 990
+    description: |
+      Peak velocity decay rate (permille per event).  When current
+      velocity is below peak, the peak slowly drifts toward it to
+      avoid a brief initial acceleration transient leaving a
+      permanently inflated peak.  Recommended range [950, 999].
+      Values >= 1000 are unsafe: the peak can grow without bound.
+  gesture-timeout:
+    type: int
+    default: 100
+    description: |
+      Milliseconds of silence after which the next event is treated
+      as a brand-new gesture (all tracking state reset).  Prevents
+      stale velocity/peak from a previous session contaminating a
+      new one.  Recommended range [50, 500].
+  suppress-limit:
+    type: int
+    default: 50
+    description: |
+      Hard safety limit: if this many consecutive same-direction
+      events are *absorbed* in COASTING (event speed at or below the
+      current inertia, so they're consumed silently rather than passed
+      downstream), force a transition back to TRACKING.  50 events
+      ≈ 400 ms at 125 Hz.  Recommended range [20, 200].  Low values
+      cause needless drop-outs on valid long coasts; high values let
+      stuck states persist longer.
+
+      Bumps (event speed above the inertia, where the user is driving
+      the coast) are not counted: they're the opposite of the stuck
+      state this limit detects, and counting them would let a strong
+      flick's long natural-decay tail trip the limit and cancel its
+      own inertia mid-gesture.
+  exact-magnitude:
+    type: boolean
+    description: |
+      Use the exact Pythagorean formula sqrt(x² + y²) for every
+      vector-magnitude computation (arming threshold, deceleration
+      ratio, stop gate, same-direction coast comparison, cross-axis
+      merge, and AXIS_BOTH decay).  When unset (the default), the
+      processor uses the integer approximation max(|x|,|y|) + min/2,
+      which is up to ~12% over the true magnitude at atan(1/2) and
+      +6% at 45°.
+
+      Enable this when you want strictly angle-invariant behaviour —
+      a diagonal flick arms and stops at exactly the same physical
+      speed as an axis-aligned one, and a diagonal roll produces
+      scroll output matching sqrt(x²+y²) rather than slightly inflated
+      values.
+
+      Tuning note: the existing `start` / `stop` / `decel-ratio` /
+      `suppress-limit` defaults were chosen against the approximation.
+      Turning this on makes those thresholds effectively ~6% stricter
+      for off-axis input (true magnitude is lower than approximation).
+      In practice this is usually imperceptible, but if arming on
+      diagonal flicks feels less eager after enabling, lower `start`
+      by ~6% to compensate.
+
+      Integer-only — no libm dependency, uses Newton's iteration.
+      Cost is a handful of extra cycles per magnitude call; negligible
+      at typical 8 ms tick rates.
+
+  handoff-ms:
+    type: int
+    default: 100
+    description: |
+      Duration (ms) after inertia starts during which any
+      below-inertia same-direction event is absorbed unconditionally.
+      Covers the brief period where the ball's natural post-flick
+      deceleration is still producing events that should not interrupt
+      the coast.
+
+      After this window closes, a same-direction event is only passed
+      through when it is *clearly weaker* than the current inertia
+      (below half of inertia_vel).  The ball's natural deceleration
+      decays more slowly than the configured inertia, so its tail
+      events stay close to inertia_vel and continue to be absorbed —
+      this keeps normal flick behaviour unchanged.  A genuinely weak
+      new user gesture (e.g. gently nudging the ball during a coast)
+      falls far below half inertia_vel and passes through, avoiding
+      the visible stall where absorbed weak input coincides with the
+      late-coast sparse-emit regime.
+
+      Stronger events (above inertia velocity) still bump and absorb
+      regardless of window — they refresh the inertia rather than
+      fighting it.  Recommended range [50, 300].  Too short clips
+      heavy-ball natural deceleration; too long lets the stall
+      symptom reappear.

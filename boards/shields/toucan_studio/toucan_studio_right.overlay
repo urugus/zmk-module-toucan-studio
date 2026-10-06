@@ -1,0 +1,12 @@
+/*
+ * Toucan Studio on the right (peripheral) half: the trackpad settings become adjustable from
+ * the app through the left half. Must come after `toucan_right` in the shield list.
+ */
+
+/ {
+    // Defaults come from Toucan's &glidepoint.
+    toucan_right_trackpad: toucan_right_trackpad {
+        compatible = "zmk,toucan-right-trackpad";
+        trackpad = <&glidepoint>;
+    };
+};

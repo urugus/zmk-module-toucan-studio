@@ -1,0 +1,33 @@
+DT_COMPAT_TOUCAN_POINTER_SPEED := zmk,input-processor-toucan-pointer-speed
+DT_COMPAT_TOUCAN_SCROLL := zmk,input-processor-toucan-scroll
+DT_COMPAT_TOUCAN_RIGHT_TRACKPAD := zmk,toucan-right-trackpad
+
+config TOUCAN_STUDIO_POINTER_SPEED
+    bool "Toucan Studio: runtime pointer speed"
+    default $(dt_compat_enabled,$(DT_COMPAT_TOUCAN_POINTER_SPEED))
+    select SETTINGS
+
+config TOUCAN_STUDIO_SCROLL
+    bool "Toucan Studio: runtime scroll settings"
+    default $(dt_compat_enabled,$(DT_COMPAT_TOUCAN_SCROLL))
+    select SETTINGS
+    depends on ZMK_INPUT_PROCESSOR_SCROLL_INERTIA
+
+config TOUCAN_STUDIO_RAW_HID
+    bool "Toucan Studio: settings protocol over raw HID (A03/A06/A14)"
+    default y
+    depends on RAW_HID && (TOUCAN_STUDIO_POINTER_SPEED || TOUCAN_STUDIO_SCROLL)
+
+# Right half (peripheral): trackpad settings, answered over the left half's link service.
+config TOUCAN_STUDIO_RIGHT_TRACKPAD
+    bool "Toucan Studio: right-half trackpad settings (M6)"
+    default $(dt_compat_enabled,$(DT_COMPAT_TOUCAN_RIGHT_TRACKPAD))
+    depends on SPI && BT
+    select SETTINGS
+    select BT_GATT_CLIENT
+
+# Left half (central): relays right-half requests from the app over the split link.
+config TOUCAN_STUDIO_RIGHT_RELAY
+    bool "Toucan Studio: relay right-half settings (M6)"
+    default y
+    depends on TOUCAN_STUDIO_RAW_HID && ZMK_SPLIT_ROLE_CENTRAL && ZMK_SPLIT_BLE

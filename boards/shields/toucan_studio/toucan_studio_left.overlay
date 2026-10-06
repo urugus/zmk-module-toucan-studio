@@ -1,0 +1,58 @@
+/*
+ * Toucan Studio on the left (central) half: the trackpad's pointer speed and per-layer
+ * scrolling become adjustable from the app. Must come after `toucan_left` in the shield list,
+ * since it replaces the processors of its `glidepoint_listener`.
+ */
+
+/ {
+    // Pointer speed adjustable from the app. 225 = Toucan's `&zip_xy_scaler 9 4`.
+    toucan_pointer_speed: toucan_pointer_speed {
+        compatible = "zmk,input-processor-toucan-pointer-speed";
+        #input-processor-cells = <0>;
+        default-scale-x100 = <225>;
+    };
+
+    // Per-layer trackpad scrolling adjustable from the app. Defaults: layer 1 = precision
+    // (1/16), layer 2 = inertia (1/5, coasting at 5/6). Other layers keep the cursor.
+    toucan_scroll: toucan_scroll {
+        compatible = "zmk,input-processor-toucan-scroll";
+        #input-processor-cells = <1>;
+        inertia = <&scroll_inertia>;
+        coast-ratio = <5 6>;
+
+        precision {
+            layer = <1>;
+            speed-x10000 = <625>;
+            dir = <1>;
+        };
+
+        inertial {
+            layer = <2>;
+            speed-x10000 = <2000>;
+            dir = <1>;
+            inertia-on;
+            start = <20>;
+            decay = <990>;
+        };
+    };
+
+    scroll_inertia: scroll_inertia {
+        compatible = "zmk,input-processor-scroll-inertia";
+        #input-processor-cells = <0>;
+        axis = <0>;
+        scale = <1>;
+        scale-div = <6>;
+        start = <20>;
+        move = <50>;
+        min-events = <5>;
+        decel-samples = <2>;
+        release = <24>;
+    };
+};
+
+&glidepoint_listener {
+    // Scrolling layers turn X/Y into wheel events before the pointer speed applies.
+    input-processors = <&toucan_scroll 0 &scroll_inertia &toucan_scroll 1 &toucan_pointer_speed>;
+
+    /delete-node/ scroller;
+};

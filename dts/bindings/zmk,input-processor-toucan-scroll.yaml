@@ -1,0 +1,51 @@
+description: |
+  Per-layer trackpad scrolling that the Toucan Studio app can change at runtime (A09/A10).
+  Place in the listener's base chain:
+    <&node 0>, <&scroll_inertia>, <&node 1>, then the pointer speed processor.
+  Stage 0 turns X/Y into wheel events (with direction) when the highest active layer
+  with scrolling on asks for it; stage 1 applies that layer's speed. Layers without
+  scrolling keep normal cursor movement.
+  Child nodes give per-layer defaults; a layer without a child starts with scrolling off.
+
+compatible: "zmk,input-processor-toucan-scroll"
+
+include: ip_one_param.yaml
+
+properties:
+  inertia:
+    type: phandle
+    required: true
+    description: The shared scroll-inertia processor.
+  coast-ratio:
+    type: array
+    default: [5, 6]
+    description: Inertia output speed relative to active scrolling, as <num den>.
+  off-speed-x10000:
+    type: int
+    default: 2000
+    description: Initial speed when scrolling is turned on for a layer without a child node.
+  off-dir:
+    type: int
+    default: 1
+
+child-binding:
+  description: Defaults for one layer (scrolling on).
+  properties:
+    layer:
+      type: int
+      required: true
+      description: Layer id.
+    speed-x10000:
+      type: int
+      required: true
+    dir:
+      type: int
+      default: 0
+    inertia-on:
+      type: boolean
+    start:
+      type: int
+      default: 20
+    decay:
+      type: int
+      default: 990

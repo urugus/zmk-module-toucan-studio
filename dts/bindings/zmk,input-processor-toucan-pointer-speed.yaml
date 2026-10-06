@@ -1,0 +1,13 @@
+description: |
+  Pointer speed that the Toucan Studio app can change at runtime (A03/A05).
+  Scales REL_X/REL_Y by scale/100. The value is kept in RAM until saved.
+
+compatible: "zmk,input-processor-toucan-pointer-speed"
+
+include: ip_zero_param.yaml
+
+properties:
+  default-scale-x100:
+    type: int
+    required: true
+    description: Scale used when nothing is saved, as multiplier x100 (225 = 9/4).

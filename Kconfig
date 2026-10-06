@@ -1,0 +1,2 @@
+rsource "scroll-inertia/Kconfig"
+rsource "toucan-studio/Kconfig"
